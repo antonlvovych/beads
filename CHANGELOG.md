@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Issues pulled from GitHub, GitLab, Azure DevOps and Notion now get regular
+  bead IDs.** A new remote issue imported by `bd github sync` (and the GitLab,
+  ADO and Notion pulls) used to get a long ID such as
+  `bd-1790493456198-1-ceee7f48` instead of a short hash ID like `bd-6ce`. The
+  store now mints these IDs the same way `bd create` does, including adaptive
+  length, collision retry and counter mode, and a `issue-prefix` set in
+  config.yaml still wins over the database's prefix. Existing beads keep their
+  IDs, and dependencies between issues imported in the same pull still link.
+
 - **`bd close` now exits non-zero when any issue in a batch fails to close**
   ([#6648](https://github.com/gastownhall/beads/issues/6648)). A batch with one
   refused id used to exit 0 as long as another id closed, so scripts could not
