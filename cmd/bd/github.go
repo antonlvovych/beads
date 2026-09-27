@@ -702,6 +702,9 @@ func pushGitHubDependencyLinks(ctx context.Context, gt *github.Tracker, st stora
 	for _, linkType := range res.Unsupported {
 		warn(fmt.Sprintf("GitHub relationship sync: %s API not available for this repository (404); skipping %s links for this sync", linkType, linkType))
 	}
+	for _, number := range res.MissingSources {
+		warn(fmt.Sprintf("GitHub relationship sync: issue #%d not found (deleted or transferred?); skipping its relationship links", number))
+	}
 	for _, err := range res.Errors {
 		warn(fmt.Sprintf("GitHub relationship sync: %v", err))
 	}
