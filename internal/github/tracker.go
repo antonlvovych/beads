@@ -274,6 +274,16 @@ func (t *Tracker) ExtractIdentifier(ref string) string {
 	return matches[1]
 }
 
+// RefScope returns the repository scope used to resolve external refs to issue
+// numbers for relationship sync. Refs are deliberately not resolved by issue
+// number alone: see RefScope.
+func (t *Tracker) RefScope() RefScope {
+	if t.client == nil {
+		return RefScope{}
+	}
+	return NewRefScope(t.client.BaseURL, t.client.Owner, t.client.Repo)
+}
+
 func (t *Tracker) BuildExternalRef(issue *tracker.TrackerIssue) string {
 	if issue.URL != "" {
 		return issue.URL
