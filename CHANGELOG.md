@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   follow-up update, like the GitLab tracker; if that update fails, the created
   issue is still linked and the sync prints a warning.
 
+- **Tracker incremental pull no longer loses remote changes that surface
+  late.** `bd <tracker> sync` stored `<tracker>.last_sync` as the end of the
+  sync and the next pull asked the tracker only for issues updated since
+  then, so an issue created or edited on the tracker just before or during a
+  sync that its list endpoint did not return yet (GitHub's issue list lags
+  writes by a few seconds) was never imported until it was edited again.
+  Incremental pulls now fetch from 5 minutes before `last_sync`; re-fetched
+  issues that have not changed are skipped without a local write. The
+  conflict guard still uses the exact `last_sync` value.
 - **`bd close` now exits non-zero when any issue in a batch fails to close**
   ([#6648](https://github.com/gastownhall/beads/issues/6648)). A batch with one
   refused id used to exit 0 as long as another id closed, so scripts could not
