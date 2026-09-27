@@ -29,17 +29,6 @@ type RefScope struct {
 	repo    string
 }
 
-// SubIssueLinkFromParentChild is retained for existing callers. Relationship
-// sync itself uses the scoped RefScope method below.
-func SubIssueLinkFromParentChild(issue *types.Issue, parent *types.IssueWithDependencyMetadata) (DependencyLink, bool) {
-	return NewRefScope("https://github.com", "o", "r").SubIssueLinkFromParentChild(issue, parent)
-}
-
-// BlockedByLinkFromBeadsDependency is retained for existing callers.
-func BlockedByLinkFromBeadsDependency(issue *types.Issue, dep *types.IssueWithDependencyMetadata) (DependencyLink, bool) {
-	return NewRefScope("https://github.com", "o", "r").BlockedByLinkFromBeadsDependency(issue, dep)
-}
-
 // NewRefScope builds a ref scope for a repository reachable at the given REST
 // API base URL.
 func NewRefScope(baseURL, owner, repo string) RefScope {
@@ -159,32 +148,6 @@ type PushLinkResult struct {
 	Errors             []error
 }
 
-// LinkResolver handles GitHub relationship convergence (sub-issues and issue
-// dependencies) for one repository.
-type LinkResolver struct {
-	Client *Client
-	scope  RefScope
-}
-
-// NewLinkResolver creates a GitHub dependency link resolver whose ref scope is
-// the client's repository.
-func NewLinkResolver(client *Client) *LinkResolver {
-	r := &LinkResolver{Client: client}
-	if client != nil {
-		r.scope = NewRefScope(client.BaseURL, client.Owner, client.Repo)
-	}
-	return r
-}
-
-// Scope returns the repository that external refs must point at to take part
-// in relationship sync.
-func (r *LinkResolver) Scope() RefScope {
-	if r == nil {
-		return RefScope{}
-	}
-	return r.scope
-}
-
 // SubIssueLinkFromParentChild converts one beads parent-child dependency into
 // a GitHub sub-issue link. parent must be the issue that issue's
 // GetDependenciesWithMetadata resolved via a DepParentChild edge. Both refs
@@ -287,9 +250,9 @@ func DeduplicateLinks(links []DependencyLink) []DependencyLink {
 // once and consulted before any create call, so re-running a sync does not
 // re-POST relationships that already exist. Stale remote relationships are
 // left untouched.
-func (r *LinkResolver) PushLinks(ctx context.Context, desired []DependencyLink, opts PushLinkOptions) PushLinkResult {
-	if r == nil || r.Client == nil {
-		return PushLinkResult{Errors: []error{fmt.Errorf("GitHub link resolver has no client")}}
+func (t *Tracker) PushLinks(ctx context.Context, desired []DependencyLink, opts PushLinkOptions) PushLinkResult {
+	if t == nil || t.client == nil {
+		return PushLinkResult{Errors: []error{fmt.Errorf("GitHub tracker not initialized")}}
 	}
 
 	desired = DeduplicateLinks(desired)
@@ -307,7 +270,7 @@ func (r *LinkResolver) PushLinks(ctx context.Context, desired []DependencyLink, 
 		if !ok {
 			// One list call per (source issue, link type), and one error per
 			// failed source rather than one per link hanging off it.
-			targets, err := r.fetchCurrentTargets(ctx, link.FromNumber, link.LinkType)
+			targets, err := t.fetchCurrentTargets(ctx, link.FromNumber, link.LinkType)
 			state = &githubLinkSourceState{targets: targets}
 			if err != nil {
 				state.failed = true
@@ -344,7 +307,7 @@ func (r *LinkResolver) PushLinks(ctx context.Context, desired []DependencyLink, 
 
 		targetID, ok := idByNumber[link.ToNumber]
 		if !ok {
-			issue, err := r.Client.FetchIssueByNumber(ctx, link.ToNumber)
+			issue, err := t.client.FetchIssueByNumber(ctx, link.ToNumber)
 			if err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("resolve GitHub issue #%d: %w", link.ToNumber, err))
 				continue
@@ -356,9 +319,9 @@ func (r *LinkResolver) PushLinks(ctx context.Context, desired []DependencyLink, 
 		var err error
 		switch link.LinkType {
 		case githubLinkSubIssue:
-			err = r.Client.AddSubIssue(ctx, link.FromNumber, targetID)
+			err = t.client.AddSubIssue(ctx, link.FromNumber, targetID)
 		case githubLinkBlockedBy:
-			err = r.Client.AddBlockedBy(ctx, link.FromNumber, targetID)
+			err = t.client.AddBlockedBy(ctx, link.FromNumber, targetID)
 		default:
 			continue
 		}
@@ -387,14 +350,14 @@ type githubLinkSourceState struct {
 	notFound bool
 }
 
-func (r *LinkResolver) fetchCurrentTargets(ctx context.Context, number int, linkType string) (map[int]struct{}, error) {
+func (t *Tracker) fetchCurrentTargets(ctx context.Context, number int, linkType string) (map[int]struct{}, error) {
 	var issues []Issue
 	var err error
 	switch linkType {
 	case githubLinkSubIssue:
-		issues, err = r.Client.ListSubIssues(ctx, number)
+		issues, err = t.client.ListSubIssues(ctx, number)
 	case githubLinkBlockedBy:
-		issues, err = r.Client.ListBlockedBy(ctx, number)
+		issues, err = t.client.ListBlockedBy(ctx, number)
 	default:
 		return nil, fmt.Errorf("unknown GitHub link type %q", linkType)
 	}

@@ -665,12 +665,11 @@ func pushGitHubDependencyLinks(ctx context.Context, gt *github.Tracker, st stora
 		warn(warning)
 	}
 
-	resolver := gt.LinkResolver()
-	if resolver == nil || len(linkData.DesiredLinks) == 0 {
+	if len(linkData.DesiredLinks) == 0 {
 		return 0
 	}
 
-	res := resolver.PushLinks(ctx, linkData.DesiredLinks, github.PushLinkOptions{
+	res := gt.PushLinks(ctx, linkData.DesiredLinks, github.PushLinkOptions{
 		DryRun: dryRun,
 		OnPlan: func(link github.DependencyLink) {
 			if !jsonOutput {

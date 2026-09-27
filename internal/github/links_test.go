@@ -11,11 +11,13 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 )
 
+var testScope = NewRefScope("https://api.github.com", "o", "r")
+
 func TestSubIssueLinkFromParentChild(t *testing.T) {
 	child := githubIssue("bd-child", "https://github.com/o/r/issues/10", types.TypeTask)
 	parent := githubDep("bd-epic", "https://github.com/o/r/issues/5", types.DepParentChild)
 
-	link, ok := SubIssueLinkFromParentChild(child, parent)
+	link, ok := testScope.SubIssueLinkFromParentChild(child, parent)
 	if !ok {
 		t.Fatal("SubIssueLinkFromParentChild returned false")
 	}
@@ -25,7 +27,7 @@ func TestSubIssueLinkFromParentChild(t *testing.T) {
 
 	// Same issue number should not produce a self-referential link.
 	same := githubDep("bd-epic", "https://github.com/o/r/issues/10", types.DepParentChild)
-	if _, ok := SubIssueLinkFromParentChild(child, same); ok {
+	if _, ok := testScope.SubIssueLinkFromParentChild(child, same); ok {
 		t.Fatal("self-referential parent link should not be produced")
 	}
 }
@@ -34,7 +36,7 @@ func TestBlockedByLinkFromBeadsDependency(t *testing.T) {
 	issue := githubIssue("bd-a", "https://github.com/o/r/issues/10", types.TypeTask)
 	blocker := githubDep("bd-b", "https://github.com/o/r/issues/20", types.DepBlocks)
 
-	link, ok := BlockedByLinkFromBeadsDependency(issue, blocker)
+	link, ok := testScope.BlockedByLinkFromBeadsDependency(issue, blocker)
 	if !ok {
 		t.Fatal("BlockedByLinkFromBeadsDependency returned false")
 	}
@@ -43,7 +45,7 @@ func TestBlockedByLinkFromBeadsDependency(t *testing.T) {
 	}
 
 	related := githubDep("bd-c", "https://github.com/o/r/issues/30", types.DepRelatesTo)
-	if _, ok := BlockedByLinkFromBeadsDependency(issue, related); ok {
+	if _, ok := testScope.BlockedByLinkFromBeadsDependency(issue, related); ok {
 		t.Fatal("non-blocks dependency type should not produce a blocked_by link")
 	}
 }
@@ -82,8 +84,8 @@ func TestPushLinksAddsMissing(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resolver := NewLinkResolver(NewClient("token", "o", "r").WithBaseURL(server.URL))
-	res := resolver.PushLinks(context.Background(), []DependencyLink{
+	gt := newTestTracker(server.URL)
+	res := gt.PushLinks(context.Background(), []DependencyLink{
 		{FromNumber: 10, ToNumber: 20, LinkType: githubLinkBlockedBy},
 	}, PushLinkOptions{})
 
@@ -113,8 +115,8 @@ func TestPushLinksIdempotentExistingLink(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resolver := NewLinkResolver(NewClient("token", "o", "r").WithBaseURL(server.URL))
-	res := resolver.PushLinks(context.Background(), []DependencyLink{
+	gt := newTestTracker(server.URL)
+	res := gt.PushLinks(context.Background(), []DependencyLink{
 		{FromNumber: 5, ToNumber: 20, LinkType: githubLinkSubIssue},
 	}, PushLinkOptions{})
 
@@ -142,8 +144,8 @@ func TestPushLinksDryRunDoesNotPost(t *testing.T) {
 	defer server.Close()
 
 	var planned []DependencyLink
-	resolver := NewLinkResolver(NewClient("token", "o", "r").WithBaseURL(server.URL))
-	res := resolver.PushLinks(context.Background(), []DependencyLink{
+	gt := newTestTracker(server.URL)
+	res := gt.PushLinks(context.Background(), []DependencyLink{
 		{FromNumber: 5, ToNumber: 20, LinkType: githubLinkSubIssue},
 	}, PushLinkOptions{
 		DryRun: true,
@@ -174,4 +176,8 @@ func githubDep(id, ref string, depType types.DependencyType) *types.IssueWithDep
 		Issue:          *githubIssue(id, ref, types.TypeTask),
 		DependencyType: depType,
 	}
+}
+
+func newTestTracker(baseURL string) *Tracker {
+	return &Tracker{client: NewClient("token", "o", "r").WithBaseURL(baseURL)}
 }
