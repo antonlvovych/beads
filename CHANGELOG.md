@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bd github sync` now closes GitHub issues it creates for closed beads**
+  ([#6773](https://github.com/gastownhall/beads/issues/6773)). GitHub's create
+  endpoint cannot set state, so a closed bead used to become an open issue, and
+  because the recorded push hash already said "closed", later syncs skipped it
+  and it never closed. The GitHub tracker now closes the new issue with a
+  follow-up update, like the GitLab tracker; if that update fails, the created
+  issue is still linked and the sync prints a warning.
+
 - **`bd close` now exits non-zero when any issue in a batch fails to close**
   ([#6648](https://github.com/gastownhall/beads/issues/6648)). A batch with one
   refused id used to exit 0 as long as another id closed, so scripts could not
