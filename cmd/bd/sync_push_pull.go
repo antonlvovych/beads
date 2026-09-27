@@ -628,7 +628,11 @@ func runGitHubPush(cmd *cobra.Command, args []string) error {
 	warnLink := func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) }
 	linksPushed := pushGitHubDependencyLinks(ctx, gt, store, opts, dryRun, os.Stdout, warnLink)
 	if linksPushed > 0 && !jsonOutput {
-		fmt.Printf("✓ Synced %d relationship links\n", linksPushed)
+		if dryRun {
+			fmt.Printf("Would sync %d relationship links\n", linksPushed)
+		} else {
+			fmt.Printf("✓ Synced %d relationship links\n", linksPushed)
+		}
 	}
 
 	outputSyncResult(result, dryRun)
