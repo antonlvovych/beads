@@ -514,7 +514,7 @@ type githubLinkSyncData struct {
 }
 
 // collectGitHubLinkSyncData walks the beads issues in scope of opts and
-// derives the GitHub relationship links (sub-issue for epic/child,
+// derives the GitHub relationship links (sub-issue for any parent-child,
 // blocked_by for beads "blocks" dependencies) that should exist remotely.
 // Only issues already linked to GitHub (an ExternalRef that scope resolves to
 // an issue number in the configured repository) can contribute or receive a
@@ -671,7 +671,7 @@ func filterGitHubLinkScopedIssues(issues []*types.Issue, opts tracker.SyncOption
 }
 
 // pushGitHubDependencyLinks runs the relationship push pass: it converts
-// beads epic/child links and "blocks" dependencies among the scoped issues
+// beads parent-child links and "blocks" dependencies among the scoped issues
 // (per opts) into GitHub sub-issues and issue dependencies. Additive — stale
 // remote relationships are left untouched. Shared by `bd github sync` and
 // `bd github push` so both reach the same relationship parity. Dry-run plan
