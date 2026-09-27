@@ -195,3 +195,41 @@ func TestGitHubSyncRelationshipPassLeavesLastSync(t *testing.T) {
 		t.Fatalf("github.last_sync written %d times by bd github sync; only the engine may write it", got)
 	}
 }
+
+func assertGitHubLinkDryRun(t *testing.T, fake *fakeGitHubLinkServer, out string) {
+	t.Helper()
+	if posts := fake.takePosts(); len(posts) != 0 {
+		t.Fatalf("dry-run made relationship POSTs: %v", posts)
+	}
+	if strings.Contains(out, "Synced") {
+		t.Fatalf("dry-run output claims links were synced:\n%s", out)
+	}
+	if !strings.Contains(out, "Would sync 2 relationship links") {
+		t.Fatalf("dry-run output missing relationship plan count:\n%s", out)
+	}
+}
+
+func TestGitHubPushDryRunMakesNoRelationshipPosts(t *testing.T) {
+	_, fake, ids := setupGitHubLinkSync(t)
+
+	oldCtx := githubPushCmd.Context()
+	githubPushCmd.SetContext(context.Background())
+	t.Cleanup(func() { githubPushCmd.SetContext(oldCtx) })
+	if err := githubPushCmd.Flags().Set("dry-run", "true"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = githubPushCmd.Flags().Set("dry-run", "false") })
+
+	out := captureStdout(t, func() error { return runGitHubPush(githubPushCmd, ids) })
+	assertGitHubLinkDryRun(t, fake, out)
+}
+
+func TestGitHubSyncDryRunMakesNoRelationshipPosts(t *testing.T) {
+	_, fake, _ := setupGitHubLinkSync(t)
+
+	githubSyncPushOnly, githubSyncDryRun = true, true
+	t.Cleanup(func() { githubSyncPushOnly, githubSyncDryRun = false, false })
+
+	out := captureStdout(t, func() error { return runGitHubSync(githubSyncCmd, nil) })
+	assertGitHubLinkDryRun(t, fake, out)
+}

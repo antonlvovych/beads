@@ -166,3 +166,67 @@ func TestPushLinksSkipsUnsupportedLinkTypeAfterFirst404(t *testing.T) {
 		t.Fatalf("Unsupported = %v, want [blocked_by sub_issue]", res.Unsupported)
 	}
 }
+
+// TestPushLinksMissingSourceDoesNotDisableLinkType: a deleted or transferred
+// source issue also answers 404 on the relationship endpoints. That must skip
+// only the missing issue, not turn the whole link type off.
+func TestPushLinksMissingSourceDoesNotDisableLinkType(t *testing.T) {
+	notFound := func(w http.ResponseWriter) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}
+	var probes = map[string]int{}
+	var posts []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/repos/o/r/issues/")
+		switch {
+		// #10 is gone: every endpoint under it 404s.
+		case strings.HasPrefix(path, "10"):
+			if path == "10" {
+				probes[path]++
+			}
+			notFound(w)
+		// #12 exists and lists fine, but was transferred before the create.
+		case path == "12":
+			probes[path]++
+			notFound(w)
+		case r.Method == http.MethodPost && path == "12/dependencies/blocked_by":
+			notFound(w)
+		case r.Method == http.MethodPost:
+			posts = append(posts, path)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(Issue{ID: 1001, Number: 1})
+		case strings.HasSuffix(path, "/dependencies/blocked_by"), strings.HasSuffix(path, "/sub_issues"):
+			_ = json.NewEncoder(w).Encode([]Issue{})
+		default:
+			_ = json.NewEncoder(w).Encode(Issue{ID: 1001, Number: 1})
+		}
+	}))
+	defer server.Close()
+
+	res := newTestTracker(server.URL).PushLinks(context.Background(), []DependencyLink{
+		{FromNumber: 10, ToNumber: 1, LinkType: githubLinkBlockedBy},
+		{FromNumber: 10, ToNumber: 2, LinkType: githubLinkBlockedBy},
+		{FromNumber: 10, ToNumber: 3, LinkType: githubLinkSubIssue},
+		{FromNumber: 11, ToNumber: 1, LinkType: githubLinkBlockedBy},
+		{FromNumber: 12, ToNumber: 1, LinkType: githubLinkBlockedBy},
+		{FromNumber: 12, ToNumber: 2, LinkType: githubLinkBlockedBy},
+		{FromNumber: 13, ToNumber: 1, LinkType: githubLinkSubIssue},
+	}, PushLinkOptions{})
+
+	if len(res.Errors) != 0 {
+		t.Fatalf("Errors = %v", res.Errors)
+	}
+	if len(res.Unsupported) != 0 || res.UnsupportedSkipped != 0 {
+		t.Fatalf("Unsupported = %v (%d skipped); a missing issue must not disable a link type", res.Unsupported, res.UnsupportedSkipped)
+	}
+	if len(res.MissingSources) != 2 || res.MissingSources[0] != 10 || res.MissingSources[1] != 12 {
+		t.Fatalf("MissingSources = %v, want [10 12]", res.MissingSources)
+	}
+	if probes["10"] != 1 || probes["12"] != 1 {
+		t.Fatalf("source probes = %v, want one per missing issue", probes)
+	}
+	if res.Created != 2 || len(posts) != 2 || posts[0] != "11/dependencies/blocked_by" || posts[1] != "13/sub_issues" {
+		t.Fatalf("Created = %d, posts = %v; want links from #11 and #13 still created", res.Created, posts)
+	}
+}

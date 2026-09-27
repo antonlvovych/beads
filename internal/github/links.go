@@ -148,17 +148,24 @@ type PushLinkOptions struct {
 	OnPlan func(DependencyLink)
 }
 
-// PushLinkResult summarizes a PushLinks pass. The sub-issue and
-// issue-dependency APIs are absent on older GitHub Enterprise Server versions
-// and when the feature is off, and answer 404. The first 404 for a link type
-// disables that type for the rest of the pass: Unsupported lists the disabled
-// types in the order they were hit, and UnsupportedSkipped counts the links
-// dropped because of it, so the caller can warn once per type instead of once
-// per issue. Errors holds genuine failures, at most one per source issue.
+// PushLinkResult summarizes a PushLinks pass. A 404 from a relationship
+// endpoint means one of two things, which PushLinks tells apart by fetching
+// the source issue itself:
+//
+//   - The source issue is gone (deleted or transferred). Only that issue's
+//     links are skipped; its number is listed once in MissingSources.
+//   - The issue exists, so the endpoint itself is absent (older GitHub
+//     Enterprise Server, or the feature is off). That link type is disabled
+//     for the rest of the pass: Unsupported lists the disabled types in the
+//     order they were hit, and UnsupportedSkipped counts the links dropped
+//     because of it, so the caller can warn once per type.
+//
+// Errors holds genuine failures, at most one per source issue.
 type PushLinkResult struct {
 	Created            int
 	UnsupportedSkipped int
 	Unsupported        []string
+	MissingSources     []int
 	Errors             []error
 }
 
@@ -285,6 +292,33 @@ func (t *Tracker) PushLinks(ctx context.Context, desired []DependencyLink, opts 
 		}
 		result.UnsupportedSkipped++
 	}
+	// sourceGone caches whether a source issue answered 404 on a direct
+	// fetch, so a missing issue is probed once however many links hang off it.
+	sourceGone := make(map[int]bool)
+	// handleNotFound classifies a relationship-endpoint 404 for link and
+	// reports whether the link's source issue must be skipped for the rest of
+	// the pass. A missing source only skips that issue; an existing one means
+	// the endpoint is unsupported, which disables the whole link type.
+	handleNotFound := func(link DependencyLink) (skipSource bool) {
+		gone, probed := sourceGone[link.FromNumber]
+		if !probed {
+			_, err := t.client.FetchIssueByNumber(ctx, link.FromNumber)
+			switch {
+			case IsNotFound(err):
+				gone = true
+				result.MissingSources = append(result.MissingSources, link.FromNumber)
+			case err != nil:
+				result.Errors = append(result.Errors, fmt.Errorf("check GitHub issue #%d after %s 404: %w", link.FromNumber, link.LinkType, err))
+				return true
+			}
+			sourceGone[link.FromNumber] = gone
+		}
+		if gone {
+			return true
+		}
+		markUnsupported(link.LinkType)
+		return false
+	}
 
 	for _, link := range desired {
 		if unsupported[link.LinkType] {
@@ -297,12 +331,16 @@ func (t *Tracker) PushLinks(ctx context.Context, desired []DependencyLink, opts 
 			// One list call per (source issue, link type), and one error per
 			// failed source rather than one per link hanging off it.
 			targets, err := t.fetchCurrentTargets(ctx, link.FromNumber, link.LinkType)
-			if IsNotFound(err) {
-				markUnsupported(link.LinkType)
-				continue
-			}
 			state = &githubLinkSourceState{targets: targets}
-			if err != nil {
+			switch {
+			case IsNotFound(err):
+				state.failed = true
+				if !handleNotFound(link) {
+					// Unsupported type: later links of this type stop at the
+					// check at the top of the loop.
+					continue
+				}
+			case err != nil:
 				state.failed = true
 				result.Errors = append(result.Errors, fmt.Errorf("fetch GitHub %s for #%d: %w", link.LinkType, link.FromNumber, err))
 			}
@@ -351,9 +389,11 @@ func (t *Tracker) PushLinks(ctx context.Context, desired []DependencyLink, opts 
 		}
 		if err != nil {
 			if IsNotFound(err) {
-				// Same degradation as a 404 on the list call: the relationship
-				// API is not available here.
-				markUnsupported(link.LinkType)
+				// Same classification as a 404 on the list call. The target's
+				// ID was just resolved, so the target itself exists.
+				if handleNotFound(link) {
+					state.failed = true
+				}
 				continue
 			}
 			result.Errors = append(result.Errors, fmt.Errorf("create GitHub %s link #%d -> #%d: %w", link.LinkType, link.FromNumber, link.ToNumber, err))

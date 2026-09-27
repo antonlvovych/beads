@@ -504,6 +504,9 @@ func runGitHubSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if githubSyncDryRun {
+		if linksPushed > 0 {
+			_, _ = fmt.Fprintf(out, "Would sync %d relationship links\n", linksPushed)
+		}
 		_, _ = fmt.Fprintln(out)
 		_, _ = fmt.Fprintln(out, "Run without --dry-run to apply changes")
 	}
@@ -680,7 +683,8 @@ func filterGitHubLinkScopedIssues(issues []*types.Issue, opts tracker.SyncOption
 // remote relationships are left untouched. Shared by `bd github sync` and
 // `bd github push` so both reach the same relationship parity. Dry-run plan
 // lines are written to out (unless --json); warnings are delivered via warn.
-// Returns the number of relationships created.
+// Returns the number of relationships created, or under dryRun the number
+// that would be.
 func pushGitHubDependencyLinks(ctx context.Context, gt *github.Tracker, st storage.Storage, opts tracker.SyncOptions, dryRun bool, out io.Writer, warn func(string)) int {
 	if gt == nil {
 		return 0
@@ -705,6 +709,9 @@ func pushGitHubDependencyLinks(ctx context.Context, gt *github.Tracker, st stora
 	})
 	for _, linkType := range res.Unsupported {
 		warn(fmt.Sprintf("GitHub relationship sync: %s API not available for this repository (404); skipping %s links for this sync", linkType, linkType))
+	}
+	for _, number := range res.MissingSources {
+		warn(fmt.Sprintf("GitHub relationship sync: issue #%d not found (deleted or transferred?); skipping its relationship links", number))
 	}
 	for _, err := range res.Errors {
 		warn(fmt.Sprintf("GitHub relationship sync: %v", err))
