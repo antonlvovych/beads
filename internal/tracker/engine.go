@@ -1165,7 +1165,8 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 				}
 			}
 
-			if _, err := e.Tracker.UpdateIssue(ctx, extID, pushIssue); err != nil {
+			updated, err := e.Tracker.UpdateIssue(ctx, extID, pushIssue)
+			if err != nil {
 				if isRateLimitExhausted(err) {
 					return stats, fmt.Errorf("sync aborted: %w", err)
 				}
@@ -1176,6 +1177,13 @@ func (e *Engine) doPush(ctx context.Context, opts SyncOptions, skipIDs, forceIDs
 					return stats, nil
 				}
 				continue
+			}
+			// Surface partial-success warnings (e.g. a dropped assignee) the
+			// same way as for creates.
+			if updated != nil {
+				for _, w := range updated.Warnings {
+					e.warn("%s (%s)", w, issue.ID)
+				}
 			}
 			// Remember what we just pushed so the next sync can skip the fetch.
 			e.recordPushHash(ctx, issue, extRef)
