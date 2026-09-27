@@ -148,14 +148,17 @@ type PushLinkOptions struct {
 	OnPlan func(DependencyLink)
 }
 
-// PushLinkResult summarizes a PushLinks pass. UnsupportedSkipped counts
-// relationships GitHub answered 404 for — the sub-issue and issue-dependency
-// APIs are absent on older GitHub Enterprise Server versions — so the caller
-// can emit one curated line instead of a raw error per link. Errors holds
-// genuine failures, at most one per source issue.
+// PushLinkResult summarizes a PushLinks pass. The sub-issue and
+// issue-dependency APIs are absent on older GitHub Enterprise Server versions
+// and when the feature is off, and answer 404. The first 404 for a link type
+// disables that type for the rest of the pass: Unsupported lists the disabled
+// types in the order they were hit, and UnsupportedSkipped counts the links
+// dropped because of it, so the caller can warn once per type instead of once
+// per issue. Errors holds genuine failures, at most one per source issue.
 type PushLinkResult struct {
 	Created            int
 	UnsupportedSkipped int
+	Unsupported        []string
 	Errors             []error
 }
 
@@ -273,29 +276,39 @@ func (t *Tracker) PushLinks(ctx context.Context, desired []DependencyLink, opts 
 
 	sources := make(map[githubLinkSourceKey]*githubLinkSourceState)
 	idByNumber := make(map[int]int)
+	unsupported := make(map[string]bool)
 	var result PushLinkResult
+	markUnsupported := func(linkType string) {
+		if !unsupported[linkType] {
+			unsupported[linkType] = true
+			result.Unsupported = append(result.Unsupported, linkType)
+		}
+		result.UnsupportedSkipped++
+	}
 
 	for _, link := range desired {
+		if unsupported[link.LinkType] {
+			result.UnsupportedSkipped++
+			continue
+		}
 		srcKey := githubLinkSourceKey{Number: link.FromNumber, LinkType: link.LinkType}
 		state, ok := sources[srcKey]
 		if !ok {
 			// One list call per (source issue, link type), and one error per
 			// failed source rather than one per link hanging off it.
 			targets, err := t.fetchCurrentTargets(ctx, link.FromNumber, link.LinkType)
+			if IsNotFound(err) {
+				markUnsupported(link.LinkType)
+				continue
+			}
 			state = &githubLinkSourceState{targets: targets}
 			if err != nil {
 				state.failed = true
-				state.notFound = IsNotFound(err)
-				if !state.notFound {
-					result.Errors = append(result.Errors, fmt.Errorf("fetch GitHub %s for #%d: %w", link.LinkType, link.FromNumber, err))
-				}
+				result.Errors = append(result.Errors, fmt.Errorf("fetch GitHub %s for #%d: %w", link.LinkType, link.FromNumber, err))
 			}
 			sources[srcKey] = state
 		}
 		if state.failed {
-			if state.notFound {
-				result.UnsupportedSkipped++
-			}
 			continue
 		}
 		current := state.targets
@@ -339,8 +352,8 @@ func (t *Tracker) PushLinks(ctx context.Context, desired []DependencyLink, opts 
 		if err != nil {
 			if IsNotFound(err) {
 				// Same degradation as a 404 on the list call: the relationship
-				// API is not available here. Counted, not error-spammed.
-				result.UnsupportedSkipped++
+				// API is not available here.
+				markUnsupported(link.LinkType)
 				continue
 			}
 			result.Errors = append(result.Errors, fmt.Errorf("create GitHub %s link #%d -> #%d: %w", link.LinkType, link.FromNumber, link.ToNumber, err))
@@ -356,9 +369,8 @@ func (t *Tracker) PushLinks(ctx context.Context, desired []DependencyLink, opts 
 // githubLinkSourceState caches one source issue's existing relationships of a
 // single link type, or the fact that listing them failed.
 type githubLinkSourceState struct {
-	targets  map[int]struct{}
-	failed   bool
-	notFound bool
+	targets map[int]struct{}
+	failed  bool
 }
 
 func (t *Tracker) fetchCurrentTargets(ctx context.Context, number int, linkType string) (map[int]struct{}, error) {
