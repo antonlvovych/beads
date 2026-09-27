@@ -23,6 +23,16 @@ import (
 // syncTracer is the OTel tracer for tracker sync spans.
 var syncTracer = otel.Tracer("github.com/steveyegge/beads/tracker")
 
+// PullFetchOverlap is how far before the stored last_sync an incremental
+// pull asks the tracker for changes. last_sync is local wall clock taken at
+// the end of a sync, but tracker list endpoints can lag behind writes (a
+// GitHub issue created seconds before a sync may not be listed yet) and the
+// tracker's clock can drift from ours. Without the overlap such an issue
+// ends up with updated_at < last_sync and is never pulled until it is
+// edited again. Re-fetched, unchanged issues are skipped by pullIssueEqual,
+// so the overlap costs only a slightly larger fetch.
+const PullFetchOverlap = 5 * time.Minute
+
 // rateLimitExhaustedError is implemented by tracker errors (e.g.
 // linear.ErrRateLimitExhausted) that signal the API quota floor has been
 // hit and the sync loop should abort immediately rather than cascade the
@@ -341,7 +351,11 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 	key := e.Tracker.ConfigPrefix() + ".last_sync"
 	if lastSyncStr, err := e.Store.GetLocalMetadata(ctx, key); err == nil && lastSyncStr != "" {
 		if t, err := parseSyncTime(lastSyncStr); err == nil {
-			fetchOpts.Since = &t
+			// The fetch window overlaps the previous sync (see
+			// PullFetchOverlap); lastSync stays the exact stored value
+			// because it is the local-edit threshold for the conflict guard.
+			since := t.Add(-PullFetchOverlap)
+			fetchOpts.Since = &since
 			lastSync = &t
 			stats.Incremental = true
 			stats.SyncedSince = lastSyncStr
