@@ -60,6 +60,11 @@ func hostFromURL(raw string) string {
 	return strings.ToLower(u.Host)
 }
 
+// String names the repository refs must point at, for warnings.
+func (s RefScope) String() string {
+	return s.webHost + "/" + s.owner + "/" + s.repo
+}
+
 // IssueNumberFromRef extracts a repository-scoped GitHub issue number from a
 // beads external ref, but only when the ref points at this scope's repository.
 // A full issue URL must match the configured host and owner/repo; the
@@ -78,7 +83,7 @@ func (s RefScope) IssueNumberFromRef(ref string) (int, bool) {
 	}
 
 	u, err := url.Parse(ref)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return 0, false
 	}
 	if host := strings.ToLower(u.Host); host != s.apiHost && host != s.webHost {
@@ -96,23 +101,29 @@ func (s RefScope) IssueNumberFromRef(ref string) (int, bool) {
 }
 
 // splitIssueURLPath pulls owner, repo, and issue number out of a GitHub issue
-// URL path. It accepts both the HTML form (/{owner}/{repo}/issues/42) and the
-// REST form (/repos/{owner}/{repo}/issues/42, optionally behind a GitHub
-// Enterprise /api/v3 prefix), and requires the number to be the last segment.
+// URL path. It accepts exactly the HTML form (/{owner}/{repo}/issues/42) and
+// the REST form (/repos/{owner}/{repo}/issues/42, optionally behind a GitHub
+// Enterprise /api/v3 prefix). Anything else, such as GitLab's
+// /{group}/{project}/-/issues/42 or a deeper path, is rejected.
 func splitIssueURLPath(path string) (owner, repo string, number int, ok bool) {
 	segments := strings.Split(strings.Trim(path, "/"), "/")
-	if len(segments) < 4 {
+	switch {
+	case len(segments) == 4:
+	case len(segments) == 5 && segments[0] == "repos":
+		segments = segments[1:]
+	case len(segments) == 7 && segments[0] == "api" && segments[1] == "v3" && segments[2] == "repos":
+		segments = segments[3:]
+	default:
 		return "", "", 0, false
 	}
-	last := len(segments) - 1
-	if segments[last-1] != "issues" {
+	if segments[2] != "issues" {
 		return "", "", 0, false
 	}
-	n, err := strconv.Atoi(segments[last])
+	n, err := strconv.Atoi(segments[3])
 	if err != nil || n <= 0 {
 		return "", "", 0, false
 	}
-	owner, repo = segments[last-3], segments[last-2]
+	owner, repo = segments[0], segments[1]
 	if owner == "" || repo == "" {
 		return "", "", 0, false
 	}

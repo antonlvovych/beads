@@ -518,7 +518,8 @@ type githubLinkSyncData struct {
 // blocked_by for beads "blocks" dependencies) that should exist remotely.
 // Only issues already linked to GitHub (an ExternalRef that scope resolves to
 // an issue number in the configured repository) can contribute or receive a
-// link; refs pointing at another repository or host are skipped, since the
+// link; refs pointing at another repository or host are skipped with a
+// warning, since the
 // relationship endpoints take bare issue numbers scoped to one repo.
 //
 // The workspace read is issueops.Reader's, reached through the store's own
@@ -554,6 +555,22 @@ func collectGitHubLinkSyncData(ctx context.Context, st storage.Storage, scope gi
 	}
 
 	var warnings []string
+	warnedRefs := make(map[string]bool)
+	// warnForeignRefs names each ref on a relationship that the scope rejected,
+	// once per ref, so a link dropped because it points at another repository
+	// or tracker is visible rather than silently missing.
+	warnForeignRefs := func(refs ...*string) {
+		for _, ref := range refs {
+			if ref == nil || strings.TrimSpace(*ref) == "" || warnedRefs[*ref] {
+				continue
+			}
+			if _, ok := scope.IssueNumberFromRef(*ref); ok {
+				continue
+			}
+			warnedRefs[*ref] = true
+			warnings = append(warnings, fmt.Sprintf("GitHub relationship sync skipped external ref %q: not an issue in %s", *ref, scope))
+		}
+	}
 	var desired []github.DependencyLink
 	for _, issue := range scopedIssues {
 		if issue.ExternalRef == nil {
@@ -572,10 +589,14 @@ func collectGitHubLinkSyncData(ctx context.Context, st storage.Storage, scope gi
 			case types.DepParentChild:
 				if link, ok := scope.SubIssueLinkFromParentChild(issue, dep); ok {
 					desired = append(desired, link)
+				} else {
+					warnForeignRefs(issue.ExternalRef, dep.ExternalRef)
 				}
 			case types.DepBlocks:
 				if link, ok := scope.BlockedByLinkFromBeadsDependency(issue, dep); ok {
 					desired = append(desired, link)
+				} else {
+					warnForeignRefs(issue.ExternalRef, dep.ExternalRef)
 				}
 			}
 		}
