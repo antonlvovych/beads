@@ -77,6 +77,13 @@ func (t *Tracker) Init(ctx context.Context, store tracker.Store) error {
 	}
 
 	t.config = DefaultMappingConfig()
+	if v := t.getConfig(ctx, "github.push_assignee", "GITHUB_PUSH_ASSIGNEE"); v != "" {
+		pushAssignee, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("invalid github.push_assignee %q: must be true or false", v)
+		}
+		t.config.PushAssignee = pushAssignee
+	}
 	return nil
 }
 
@@ -135,13 +142,22 @@ func (t *Tracker) FetchIssue(ctx context.Context, identifier string) (*tracker.T
 func (t *Tracker) CreateIssue(ctx context.Context, issue *types.Issue) (*tracker.TrackerIssue, error) {
 	fields := BeadsIssueToGitHubFields(issue, t.config)
 	labels, _ := fields["labels"].([]string)
+	assignees, _ := fields["assignees"].([]string)
 
-	created, err := t.client.CreateIssue(ctx, issue.Title, issue.Description, labels)
+	created, err := t.client.CreateIssue(ctx, issue.Title, issue.Description, labels, assignees)
+	var warnings []string
+	if err != nil && assignees != nil && isAssigneeValidationError(err) {
+		// A 422 rejects the whole request, so no issue was created and
+		// retrying without assignees cannot produce a duplicate.
+		warnings = append(warnings, assigneeDroppedWarning(assignees, err))
+		created, err = t.client.CreateIssue(ctx, issue.Title, issue.Description, labels, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	ti := githubToTrackerIssue(created)
+	ti.Warnings = warnings
 	return &ti, nil
 }
 
@@ -153,12 +169,26 @@ func (t *Tracker) UpdateIssue(ctx context.Context, externalID string, issue *typ
 
 	updates := BeadsIssueToGitHubFields(issue, t.config)
 	updated, err := t.client.UpdateIssue(ctx, number, updates)
+	var warnings []string
+	if assignees, ok := updates["assignees"].([]string); ok && err != nil && isAssigneeValidationError(err) {
+		warnings = append(warnings, assigneeDroppedWarning(assignees, err))
+		delete(updates, "assignees")
+		updated, err = t.client.UpdateIssue(ctx, number, updates)
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	ti := githubToTrackerIssue(updated)
+	ti.Warnings = warnings
 	return &ti, nil
+}
+
+// assigneeDroppedWarning describes an assignee GitHub rejected, after which
+// the push was retried without the assignees field.
+func assigneeDroppedWarning(assignees []string, err error) string {
+	return fmt.Sprintf("GitHub rejected assignee %q; pushed without assignee: %v",
+		strings.Join(assignees, ","), err)
 }
 
 func (t *Tracker) FieldMapper() tracker.FieldMapper {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -16,6 +17,44 @@ import (
 
 // linkNextPattern matches the "next" relation in GitHub Link headers.
 var linkNextPattern = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
+
+// ValidationError is a GitHub 422 "Validation failed" response. Its message
+// matches the generic API error so existing error text is unchanged.
+type ValidationError struct {
+	Body []byte
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("API error: %s (status %d)", string(e.Body), http.StatusUnprocessableEntity)
+}
+
+// IsAssigneeError reports whether the validation failure is about the
+// assignees field, e.g. a login that cannot be assigned in the repository.
+func (e *ValidationError) IsAssigneeError() bool {
+	var env struct {
+		Message string `json:"message"`
+		Errors  []struct {
+			Field   string `json:"field"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(e.Body, &env); err != nil {
+		return false
+	}
+	for _, fe := range env.Errors {
+		if fe.Field == "assignees" || fe.Field == "assignee" ||
+			strings.Contains(strings.ToLower(fe.Message), "assignee") {
+			return true
+		}
+	}
+	return false
+}
+
+// isAssigneeValidationError reports whether err is a 422 caused by assignees.
+func isAssigneeValidationError(err error) bool {
+	var ve *ValidationError
+	return errors.As(err, &ve) && ve.IsAssigneeError()
+}
 
 // NewClient creates a new GitHub client with the given token, owner, and repo.
 func NewClient(token, owner, repo string) *Client {
@@ -144,6 +183,9 @@ func (c *Client) doRequest(ctx context.Context, method, urlStr string, body inte
 			continue
 		}
 
+		if resp.StatusCode == http.StatusUnprocessableEntity {
+			return nil, nil, &ValidationError{Body: respBody}
+		}
 		return nil, nil, fmt.Errorf("API error: %s (status %d)", string(respBody), resp.StatusCode)
 	}
 
@@ -308,14 +350,18 @@ func (c *Client) FetchIssuesSince(ctx context.Context, state string, since time.
 	return allIssues, nil
 }
 
-// CreateIssue creates a new issue in GitHub.
-func (c *Client) CreateIssue(ctx context.Context, title, body string, labels []string) (*Issue, error) {
+// CreateIssue creates a new issue in GitHub. A nil assignees slice omits the
+// field; a non-nil one (including empty) is sent as the assignee set.
+func (c *Client) CreateIssue(ctx context.Context, title, body string, labels, assignees []string) (*Issue, error) {
 	reqBody := map[string]interface{}{
 		"title": title,
 		"body":  body,
 	}
 	if len(labels) > 0 {
 		reqBody["labels"] = labels
+	}
+	if assignees != nil {
+		reqBody["assignees"] = assignees
 	}
 
 	urlStr := fmt.Sprintf("%s%s/issues", c.BaseURL, c.repoPath())

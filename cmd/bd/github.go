@@ -36,7 +36,9 @@ Configuration can be set via 'bd config' or environment variables:
   github.owner / GITHUB_OWNER           - Repository owner
   github.repo / GITHUB_REPO             - Repository name
   github.repository / GITHUB_REPOSITORY - Combined "owner/repo" format
-  github.url / GITHUB_API_URL           - Custom API URL (GitHub Enterprise)`,
+  github.url / GITHUB_API_URL           - Custom API URL (GitHub Enterprise)
+  github.push_assignee / GITHUB_PUSH_ASSIGNEE
+                                        - Push bead assignee as GitHub login (default false)`,
 }
 
 // githubSyncCmd synchronizes issues between beads and GitHub.
@@ -251,6 +253,8 @@ func githubConfigToEnvVar(key string) string {
 		return "GITHUB_REPOSITORY"
 	case "github.url":
 		return "GITHUB_API_URL"
+	case "github.push_assignee":
+		return "GITHUB_PUSH_ASSIGNEE"
 	default:
 		return ""
 	}

@@ -116,6 +116,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GitHub push can carry the bead assignee** (opt-in,
+  [#6775](https://github.com/gastownhall/beads/issues/6775)). With
+  `bd config set github.push_assignee true` (or `GITHUB_PUSH_ASSIGNEE=true`),
+  `bd github push` / `sync` sends the bead assignee as the issue's GitHub
+  assignee on create and update, and clears it when the bead is unassigned.
+  The assignee is sent as-is as a GitHub login. An assignee-only change now
+  counts as a change for push dedup. If GitHub rejects the assignee (422), the
+  issue is created or updated without it and a warning is printed instead of
+  failing the push. Off by default; with it off, pushes and their stored push
+  hashes are unchanged. Warnings returned by a tracker's update are now
+  printed the same way as create warnings.
+
 - **`bd backup` works on a proxied-server workspace bd runs the Dolt server
   for.** `bd backup init`, `sync`, `remove`, `status` and `restore` are routed
   over the proxied provider; before this, a proxied workspace — the default
