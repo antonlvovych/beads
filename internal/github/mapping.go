@@ -16,6 +16,11 @@ type MappingConfig struct {
 	PriorityMap  map[string]int    // priority label value -> beads priority (0-4)
 	StateMap     map[string]string // GitHub state -> beads status
 	LabelTypeMap map[string]string // type label value -> beads issue type
+
+	// PushAssignee enables sending the bead assignee as the GitHub issue's
+	// assignee set on create and update (github.push_assignee). Off by
+	// default so pushes, and their persisted content hashes, are unchanged.
+	PushAssignee bool
 }
 
 // DefaultMappingConfig returns the default mapping configuration.
@@ -194,12 +199,55 @@ func BeadsIssueToGitHubFields(issue *types.Issue, config *MappingConfig) map[str
 		fields["state"] = "open"
 	}
 
+	// Send the assignee set only when opted in. An empty array clears the
+	// remote assignees, so unassigning a bead carries over to GitHub.
+	if config != nil && config.PushAssignee {
+		fields["assignees"] = desiredAssignees(issue)
+	}
+
 	return fields
 }
 
+// desiredAssignees returns the GitHub assignee set a push would send for
+// issue: the bead assignee as a login, or an empty set when unassigned.
+func desiredAssignees(issue *types.Issue) []string {
+	if login := strings.TrimSpace(issue.Assignee); login != "" {
+		return []string{login}
+	}
+	return []string{}
+}
+
+// remoteAssigneeLogins returns the logins currently assigned to a GitHub
+// issue, falling back to the singular assignee field when the list is absent.
+func remoteAssigneeLogins(remote *Issue) []string {
+	logins := make([]string, 0, len(remote.Assignees))
+	for _, u := range remote.Assignees {
+		logins = append(logins, u.Login)
+	}
+	if len(logins) == 0 && remote.Assignee != nil && remote.Assignee.Login != "" {
+		logins = append(logins, remote.Assignee.Login)
+	}
+	return logins
+}
+
+// assigneeSetsEqual reports whether a and b contain the same logins, ignoring
+// order and case (GitHub logins are case-insensitive).
+func assigneeSetsEqual(a, b []string) bool {
+	return labelSetsEqual(lowerAll(a), lowerAll(b))
+}
+
+func lowerAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = strings.ToLower(s)
+	}
+	return out
+}
+
 // PushFieldsEqual reports whether a GitHub push would be a no-op by comparing
-// only the fields a push can actually mutate: title, body, state, and the
-// label set that BeadsIssueToGitHubFields would send. When these already match
+// only the fields a push can actually mutate: title, body, state, the label
+// set that BeadsIssueToGitHubFields would send, and (with PushAssignee) the
+// assignee set. When these already match
 // the remote issue, the push is redundant and can be skipped — this is what
 // prevents `bd github sync --push-only` from re-PATCHing every issue on every
 // run (gastownhall/beads#4214). Mirrors linear.PushFieldsEqual.
@@ -226,12 +274,20 @@ func PushFieldsEqual(local *types.Issue, remote *Issue, config *MappingConfig) b
 	// Both include the scoped type::/priority::/status:: labels plus any
 	// non-scoped labels, so an unchanged issue produces an identical set.
 	desiredLabels, _ := BeadsIssueToGitHubFields(local, config)["labels"].([]string)
-	return labelSetsEqual(desiredLabels, remote.LabelNames())
+	if !labelSetsEqual(desiredLabels, remote.LabelNames()) {
+		return false
+	}
+
+	if config != nil && config.PushAssignee {
+		return assigneeSetsEqual(desiredAssignees(local), remoteAssigneeLogins(remote))
+	}
+	return true
 }
 
 // PushContentHash returns a stable hex fingerprint of the fields a push would
 // send to GitHub: title, body, desired state, and the order-independent label
-// set produced by BeadsIssueToGitHubFields. The engine persists this hash in
+// set produced by BeadsIssueToGitHubFields, plus the assignee set when
+// PushAssignee is on (so hashes recorded with it off stay valid). The engine persists this hash in
 // local_metadata after each push and compares it before fetching the remote
 // issue, so an unchanged issue is skipped without any API call
 // (gastownhall/beads#4214). It is derived from the same fields PushFieldsEqual
@@ -251,8 +307,15 @@ func PushContentHash(local *types.Issue, config *MappingConfig) string {
 	sortedLabels := append([]string(nil), desiredLabels...)
 	slices.Sort(sortedLabels)
 
+	parts := []string{local.Title, local.Description, desiredState, strings.Join(sortedLabels, "\x00")}
+	if config != nil && config.PushAssignee {
+		assignees := lowerAll(desiredAssignees(local))
+		slices.Sort(assignees)
+		parts = append(parts, "assignees:"+strings.Join(assignees, "\x00"))
+	}
+
 	h := sha256.New()
-	for _, s := range []string{local.Title, local.Description, desiredState, strings.Join(sortedLabels, "\x00")} {
+	for _, s := range parts {
 		_, _ = h.Write([]byte(s))
 		_, _ = h.Write([]byte{0})
 	}
