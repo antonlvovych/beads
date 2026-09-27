@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/steveyegge/beads/internal/types"
 )
 
 func TestListRelationshipPages(t *testing.T) {
@@ -45,15 +47,70 @@ func TestListRelationshipPages(t *testing.T) {
 func TestRefScopeRejectsForeignHostAndRepository(t *testing.T) {
 	scope := NewRefScope("https://api.github.com", "owner", "repo")
 	for _, ref := range []string{
-		"https://gitlab.com/owner/repo/issues/12",
-		"https://github.com/other/repo/issues/12",
-		"https://github.com/owner/other/issues/12",
+		"https://gitlab.com/owner/repo/-/issues/42",
+		"https://gitlab.com/owner/repo/issues/42",
+		"https://github.com/other/repo/issues/42",
+		"https://github.com/owner/other/issues/42",
+		"https://github.com/owner/repo/-/issues/42",
+		"https://github.com/evil/owner/repo/issues/42",
+		"https://github.com/owner/repo/pull/42",
+		"https://ghe.example.com/owner/repo/issues/42",
+		"ftp://github.com/owner/repo/issues/42",
+		"gitlab:42",
+		"42",
+		"",
 	} {
 		if number, ok := scope.IssueNumberFromRef(ref); ok {
-			t.Fatalf("IssueNumberFromRef(%q) = %d, true; want rejected", ref, number)
+			t.Errorf("IssueNumberFromRef(%q) = %d, true; want rejected", ref, number)
 		}
 	}
-	if number, ok := scope.IssueNumberFromRef("https://github.com/owner/repo/issues/12"); !ok || number != 12 {
-		t.Fatalf("configured ref = %d, %v; want 12, true", number, ok)
+	for _, ref := range []string{
+		"https://github.com/owner/repo/issues/42",
+		"https://github.com/Owner/Repo/issues/42",
+		"https://api.github.com/repos/owner/repo/issues/42",
+		"github:42",
+	} {
+		if number, ok := scope.IssueNumberFromRef(ref); !ok || number != 42 {
+			t.Errorf("IssueNumberFromRef(%q) = %d, %v; want 42, true", ref, number, ok)
+		}
+	}
+}
+
+func TestRefScopeGitHubEnterprise(t *testing.T) {
+	scope := NewRefScope("https://ghe.example.com/api/v3", "owner", "repo")
+	for _, ref := range []string{
+		"https://ghe.example.com/owner/repo/issues/42",
+		"https://ghe.example.com/api/v3/repos/owner/repo/issues/42",
+		"github:42",
+	} {
+		if number, ok := scope.IssueNumberFromRef(ref); !ok || number != 42 {
+			t.Errorf("IssueNumberFromRef(%q) = %d, %v; want 42, true", ref, number, ok)
+		}
+	}
+	for _, ref := range []string{
+		"https://github.com/owner/repo/issues/42",
+		"https://gitlab.example.com/owner/repo/-/issues/42",
+	} {
+		if number, ok := scope.IssueNumberFromRef(ref); ok {
+			t.Errorf("IssueNumberFromRef(%q) = %d, true; want rejected", ref, number)
+		}
+	}
+}
+
+func TestRefScopeLinksSkipForeignRefs(t *testing.T) {
+	scope := NewRefScope("https://api.github.com", "owner", "repo")
+	child := githubIssue("bd-child", "https://github.com/owner/repo/issues/10", types.TypeTask)
+	for _, ref := range []string{
+		"https://gitlab.com/owner/repo/-/issues/42",
+		"https://github.com/other/repo/issues/42",
+	} {
+		parent := githubDep("bd-parent", ref, types.DepParentChild)
+		if link, ok := scope.SubIssueLinkFromParentChild(child, parent); ok {
+			t.Errorf("sub-issue link from %q = %+v; want skipped", ref, link)
+		}
+		blocker := githubDep("bd-blocker", ref, types.DepBlocks)
+		if link, ok := scope.BlockedByLinkFromBeadsDependency(child, blocker); ok {
+			t.Errorf("blocked_by link from %q = %+v; want skipped", ref, link)
+		}
 	}
 }
