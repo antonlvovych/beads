@@ -500,9 +500,21 @@ func (e *Engine) doPull(ctx context.Context, opts SyncOptions, allowOverwriteIDs
 			// handle these per the configured resolution strategy.
 			// Without this guard, pull silently overwrites local changes
 			// before conflict detection can compare timestamps.
-			if lastSync != nil && existing.UpdatedAt.After(*lastSync) && !allowOverwriteIDs[existing.ID] && !prelinkedHydrateIDs[existing.ID] {
-				stats.Skipped++
-				continue
+			//
+			// An issue re-fetched only because of PullFetchOverlap has a
+			// remote updated_at at or before last_sync, so a local edit
+			// made before last_sync would slip past that threshold. For
+			// those, the remote's own updated_at is the threshold: a local
+			// copy changed after the remote did must be kept.
+			if lastSync != nil && !allowOverwriteIDs[existing.ID] && !prelinkedHydrateIDs[existing.ID] {
+				localEditThreshold := *lastSync
+				if !extIssue.UpdatedAt.IsZero() && !extIssue.UpdatedAt.After(localEditThreshold) {
+					localEditThreshold = extIssue.UpdatedAt
+				}
+				if existing.UpdatedAt.After(localEditThreshold) {
+					stats.Skipped++
+					continue
+				}
 			}
 		}
 

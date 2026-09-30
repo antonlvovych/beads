@@ -16,8 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sync that its list endpoint did not return yet (GitHub's issue list lags
   writes by a few seconds) was never imported until it was edited again.
   Incremental pulls now fetch from 5 minutes before `last_sync`; re-fetched
-  issues that have not changed are skipped without a local write. The
-  conflict guard still uses the exact `last_sync` value.
+  issues whose synced fields (title, description, priority, status, type,
+  assignee, labels, external ref) have not changed are skipped without a
+  local write. The conflict guard still uses the exact `last_sync` value,
+  and for a re-fetched issue that the remote last changed before
+  `last_sync` it keeps any local copy edited after the remote's own
+  `updated_at`. The overlap adds up to 5 minutes of re-fetch to each
+  incremental pull's API usage.
 - **An ambient `BEADS_DOLT_SERVER_PORT` now marks a workspace externally
   managed — suppressing auto-start — and no longer stops bd reaping its own
   orphaned server**
