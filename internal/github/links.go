@@ -407,7 +407,8 @@ func (t *Tracker) PushLinks(ctx context.Context, desired []DependencyLink, opts 
 }
 
 // githubLinkSourceState caches one source issue's existing relationships of a
-// single link type, or the fact that listing them failed.
+// single link type, or the fact that listing them failed. On a 404, notFound
+// and missing record which of the two causes the probe settled on.
 type githubLinkSourceState struct {
 	targets map[int]struct{}
 	failed  bool

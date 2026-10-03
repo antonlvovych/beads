@@ -549,7 +549,18 @@ func collectGitHubLinkSyncData(ctx context.Context, st storage.Storage, scope gi
 		allIssues = append(allIssues, item.Issue)
 	}
 
-	scopedIssues := filterGitHubLinkScopedIssues(allIssues, opts)
+	// --parent scopes the content push to a subtree; the relationship pass has
+	// to honor the same subtree or it writes GitHub links for issues the user
+	// excluded from the sync.
+	var descendantSet map[string]bool
+	if opts.ParentID != "" {
+		descendantSet, err = buildSyncDescendantSet(ctx, st, opts.ParentID)
+		if err != nil {
+			return githubLinkSyncData{}, []string{fmt.Sprintf("GitHub relationship sync skipped: resolving parent %s: %v", opts.ParentID, err)}
+		}
+	}
+
+	scopedIssues := filterGitHubLinkScopedIssues(allIssues, opts, descendantSet)
 	scopedIssueIDs := make(map[string]bool, len(scopedIssues))
 	for _, issue := range scopedIssues {
 		if issue != nil && issue.ID != "" {
@@ -612,7 +623,8 @@ func collectGitHubLinkSyncData(ctx context.Context, st storage.Storage, scope gi
 // runs: every bead in both planes, at any status, of any type, unpaged.
 //
 // SCOPE IS NOT THIS REQUEST'S JOB. filterGitHubLinkScopedIssues narrows to the
-// tracker.SyncOptions the caller was given, the same way the engine's push loop
+// tracker.SyncOptions selectors the GitHub commands can set — that function
+// names them and is the place to extend — the way the engine's push loop
 // narrows the same unfiltered read with shouldPushIssue
 // (internal/tracker/engine.go). Expressing half that selection here in a second
 // vocabulary is how the two would drift, so this lifts every default a listing
@@ -642,7 +654,18 @@ func githubLinkSyncListRequest() issueops.ListRequest {
 	}
 }
 
-func filterGitHubLinkScopedIssues(issues []*types.Issue, opts tracker.SyncOptions) []*types.Issue {
+// filterGitHubLinkScopedIssues narrows the unfiltered workspace read to the
+// issues opts selects. descendantSet is the resolved --parent subtree, or nil
+// when --parent was not given; a non-nil set is a membership requirement.
+//
+// The selectors applied here are the ones a GitHub command can put on
+// SyncOptions today: ParentID (as descendantSet), IssueIDs, ExcludeEphemeral,
+// TypeFilter and ExcludeTypes. SyncOptions carries further selectors that the
+// engine's push loop honors and no GitHub command currently sets — State,
+// ExcludeIDPrefix, ExcludeIDPatterns. Anything that starts setting one of
+// those has to extend this function in the same change, or the relationship
+// pass will write links for issues the content push skipped.
+func filterGitHubLinkScopedIssues(issues []*types.Issue, opts tracker.SyncOptions, descendantSet map[string]bool) []*types.Issue {
 	var issueIDSet map[string]bool
 	if len(opts.IssueIDs) > 0 {
 		issueIDSet = make(map[string]bool, len(opts.IssueIDs))
@@ -657,6 +680,9 @@ func filterGitHubLinkScopedIssues(issues []*types.Issue, opts tracker.SyncOption
 			continue
 		}
 		if issueIDSet != nil && !issueIDSet[issue.ID] {
+			continue
+		}
+		if descendantSet != nil && !descendantSet[issue.ID] {
 			continue
 		}
 		if opts.ExcludeEphemeral && issue.Ephemeral {
