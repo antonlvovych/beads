@@ -78,7 +78,11 @@ It:
 - Defaults to `go test -timeout 3m ./...`.
 - Supports `-v`, `-timeout`, `-run`, package arguments, and extra `-skip`.
 - Enables coverage when `TEST_COVER=1`.
-- Can start one shared Dolt test server when `BEADS_TEST_SHARED_SERVER=1`.
+- Can start one shared Dolt test server when `BEADS_TEST_SHARED_SERVER=1`,
+  exporting its port together with `BEADS_TEST_SHARED_DOLT_SERVER` set to that
+  same port, so the `testutil` TestMain helpers honor that port -- and only
+  that port -- instead of clearing it as an ambient one (see
+  `engdocs/TESTING.md`).
 
 At this audit point, `.test-skip` contains only comments and no active skip
 patterns.
@@ -161,7 +165,7 @@ The former monolithic `ci.yml` has been split by tier/domain:
   the aggregate check `PR / CI Gate / Required`.
 - `pr-risk.yml`: pull request and merge queue risk jobs. It owns embedded Dolt
   risk detection, embedded build/storage/cmd shards, the Nix flake smoke, and
-  the aggregate check `PR Risk / CI Gate / Required`.
+  the aggregate check `PR Risk / PR Risk Gate / Required`.
 - `main.yml`: push-to-`main` branch health. It reruns the baseline wrappers,
   package gates, Linux/macOS short coverage, Windows smoke, embedded Dolt, Nix,
   storage domain/uow, and promoted Linux no-short integration shards.
@@ -177,13 +181,14 @@ Key jobs preserved by display name:
 - `Check version consistency`, `Check no duplicate migration versions`,
   `Check doc flags freshness`, and PR-only `Check for .beads changes`.
 - `PR Policy (wrapper timing)`, `PR Core (wrapper timing)`, and
-  `PR Lint (wrapper timing)`.
+  `PR Lint (wrapper timing)` (superseded by F5's 3-leg `PR Lint (native|windows|darwin)`
+  matrix; this is a dated snapshot).
 - `Package Gate (MCP)`, `Package Gate (npm)`, and `Package Gate (website)`.
 - `Test (storage domain + uow)`.
 - `Build (Embedded Dolt)`, `Test (Embedded Dolt Storage N/5)`, and
   `Test (Embedded Dolt Cmd N/20)`.
 - Aggregate required-check candidates: `PR / CI Gate / Required` and
-  `PR Risk / CI Gate / Required`.
+  `PR Risk / PR Risk Gate / Required`.
 - Main-only platform and integration jobs: `Test (ubuntu-latest)`,
   `Test (macos-latest)`, `Test (Windows - smoke)`,
   `Main Linux integration packages (N/6)`, and
