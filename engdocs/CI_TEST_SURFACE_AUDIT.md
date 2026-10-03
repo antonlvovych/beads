@@ -78,7 +78,11 @@ It:
 - Defaults to `go test -timeout 3m ./...`.
 - Supports `-v`, `-timeout`, `-run`, package arguments, and extra `-skip`.
 - Enables coverage when `TEST_COVER=1`.
-- Can start one shared Dolt test server when `BEADS_TEST_SHARED_SERVER=1`.
+- Can start one shared Dolt test server when `BEADS_TEST_SHARED_SERVER=1`,
+  exporting its port together with `BEADS_TEST_SHARED_DOLT_SERVER` set to that
+  same port, so the `testutil` TestMain helpers honor that port -- and only
+  that port -- instead of clearing it as an ambient one (see
+  `engdocs/TESTING.md`).
 
 At this audit point, `.test-skip` contains only comments and no active skip
 patterns.
@@ -177,7 +181,8 @@ Key jobs preserved by display name:
 - `Check version consistency`, `Check no duplicate migration versions`,
   `Check doc flags freshness`, and PR-only `Check for .beads changes`.
 - `PR Policy (wrapper timing)`, `PR Core (wrapper timing)`, and
-  `PR Lint (wrapper timing)`.
+  `PR Lint (wrapper timing)` (superseded by F5's 3-leg `PR Lint (native|windows|darwin)`
+  matrix; this is a dated snapshot).
 - `Package Gate (MCP)`, `Package Gate (npm)`, and `Package Gate (website)`.
 - `Test (storage domain + uow)`.
 - `Build (Embedded Dolt)`, `Test (Embedded Dolt Storage N/5)`, and
