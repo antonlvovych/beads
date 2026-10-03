@@ -8,7 +8,11 @@
 #                            in this mode, for CI_GATE_SKIPPED_OK:
 #                              skip:   every lane and the aggregate (BAZEL)
 #                              local:  the remote-only BAZEL_EMBEDDED,
-#                                      BAZEL_PROXIED, BAZEL_SERVER_STORAGE
+#                                      BAZEL_PROXIED, BAZEL_SERVER_STORAGE,
+#                                      and BAZEL_INTEGRATION
+#                              cache:  BAZEL_EMBEDDED, BAZEL_PROXIED,
+#                                      BAZEL_SERVER_STORAGE (integration
+#                                      runs with the read-only cache)
 #                              remote: none
 #   bazel-gate.sh aggregate  the value to gate on for BAZEL: the call's
 #                            aggregate result, or, when the mode is missing
@@ -28,7 +32,7 @@ mode="${BAZEL_RBE_MODE:-}"
 enabled="${BAZEL_RBE_ENABLED:-}"
 valid=false
 case "$mode/$enabled" in
-    remote/true | local/false | skip/false) valid=true ;;
+    remote/true | local/false | cache/false | skip/false) valid=true ;;
 esac
 
 case "${1:-}" in
@@ -36,8 +40,9 @@ case "${1:-}" in
         skips=()
         if [[ "$valid" == true ]]; then
             case "$mode" in
-                skip) skips+=(BAZEL BAZEL_TEST BAZEL_PURE BAZEL_EMBEDDED BAZEL_DOLTSERVER BAZEL_PROXIED BAZEL_SERVER_STORAGE) ;;
-                local) skips+=(BAZEL_EMBEDDED BAZEL_PROXIED BAZEL_SERVER_STORAGE) ;;
+                skip) skips+=(BAZEL BAZEL_TEST BAZEL_PURE BAZEL_EMBEDDED BAZEL_INTEGRATION BAZEL_DOLTSERVER BAZEL_PROXIED BAZEL_SERVER_STORAGE) ;;
+                local) skips+=(BAZEL_EMBEDDED BAZEL_INTEGRATION BAZEL_PROXIED BAZEL_SERVER_STORAGE) ;;
+                cache) skips+=(BAZEL_EMBEDDED BAZEL_PROXIED BAZEL_SERVER_STORAGE) ;;
             esac
         fi
         echo "${skips[*]-}"
