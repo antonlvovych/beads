@@ -45,6 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   length, collision retry and counter mode, and a `issue-prefix` set in
   config.yaml still wins over the database's prefix. Existing beads keep their
   IDs, and dependencies between issues imported in the same pull still link.
+  issues whose synced fields (title, description, priority, status, type,
+  assignee, labels, external ref) have not changed are skipped without a
+  local write. The conflict guard still uses the exact `last_sync` value,
+  and for a re-fetched issue that the remote last changed before
+  `last_sync` it keeps any local copy edited after the remote's own
+  `updated_at`. The overlap adds up to 5 minutes of re-fetch to each
+  incremental pull's API usage.
 - **`bd list` no longer silently drops all but the last repeated filter flag.**
   `--status`, `--state`, and `--id` were plain string flags, so
   `bd list --status open --status closed --status pinned` kept only `pinned` —

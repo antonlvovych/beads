@@ -134,3 +134,86 @@ func TestEnginePullOverlapsPreviousSync(t *testing.T) {
 		t.Fatalf("FetchIssues Since = %v, want last_sync - PullFetchOverlap = %v", gotSince, want)
 	}
 }
+
+// TestEnginePullOverlapKeepsLocalEditMadeBeforeLastSync covers an unpushed
+// local edit made before last_sync on an issue the remote also changed inside
+// the overlap window. The guard's last_sync threshold does not protect it, so
+// the remote's updated_at must: the local copy changed after the remote did
+// and pull must not overwrite it.
+func TestEnginePullOverlapKeepsLocalEditMadeBeforeLastSync(t *testing.T) {
+	ctx := context.Background()
+	lastSync := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+
+	ref := "https://github.test/1"
+	store := &overlapTestStore{
+		metadata: map[string]string{"github.last_sync": lastSync.Format(time.RFC3339Nano)},
+		issues: []*types.Issue{{
+			ID:          "bd-1",
+			Title:       "Edited locally",
+			Description: "local content",
+			Priority:    2,
+			Status:      types.StatusOpen,
+			IssueType:   types.TypeTask,
+			ExternalRef: &ref,
+			CreatedAt:   lastSync.Add(-time.Hour),
+			UpdatedAt:   lastSync.Add(-10 * time.Second),
+		}},
+	}
+
+	tr := newMockTracker("github")
+	tr.issues = []TrackerIssue{
+		{ID: "1", Identifier: "1", URL: ref, Title: "Edited remotely", Description: "remote content", UpdatedAt: lastSync.Add(-2 * time.Minute)},
+	}
+
+	engine := NewEngine(tr, store, "test-actor")
+	result, err := engine.Sync(ctx, SyncOptions{Pull: true})
+	if err != nil {
+		t.Fatalf("Sync error: %v", err)
+	}
+
+	if store.updates != 0 || result.PullStats.Updated != 0 {
+		t.Fatalf("updated = %d (store writes %d), want the local edit kept", result.PullStats.Updated, store.updates)
+	}
+	if result.PullStats.Skipped != 1 {
+		t.Fatalf("skipped = %d, want 1 for the protected local edit", result.PullStats.Skipped)
+	}
+}
+
+// TestEnginePullOverlapAppliesRemoteChangeOlderThanLocalCopy is the other
+// side of the same guard: when the remote changed after the local copy did,
+// the re-fetched remote content still wins.
+func TestEnginePullOverlapAppliesRemoteChangeOlderThanLocalCopy(t *testing.T) {
+	ctx := context.Background()
+	lastSync := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+
+	ref := "https://github.test/1"
+	store := &overlapTestStore{
+		metadata: map[string]string{"github.last_sync": lastSync.Format(time.RFC3339Nano)},
+		issues: []*types.Issue{{
+			ID:          "bd-1",
+			Title:       "Stale",
+			Description: "old",
+			Priority:    2,
+			Status:      types.StatusOpen,
+			IssueType:   types.TypeTask,
+			ExternalRef: &ref,
+			CreatedAt:   lastSync.Add(-time.Hour),
+			UpdatedAt:   lastSync.Add(-3 * time.Minute),
+		}},
+	}
+
+	tr := newMockTracker("github")
+	tr.issues = []TrackerIssue{
+		{ID: "1", Identifier: "1", URL: ref, Title: "Changed remotely", Description: "new", UpdatedAt: lastSync.Add(-10 * time.Second)},
+	}
+
+	engine := NewEngine(tr, store, "test-actor")
+	result, err := engine.Sync(ctx, SyncOptions{Pull: true})
+	if err != nil {
+		t.Fatalf("Sync error: %v", err)
+	}
+
+	if store.updates != 1 || result.PullStats.Updated != 1 {
+		t.Fatalf("updated = %d (store writes %d), want the late-visible remote change applied", result.PullStats.Updated, store.updates)
+	}
+}
