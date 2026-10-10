@@ -69,7 +69,9 @@ func (p *uowProvider) EdgeReader() (publicops.EdgeReader, error)    { return uow
 func (p *uowProvider) BlockingAnnotator() (publicops.BlockingAnnotator, error) {
 	return uow.NewBlockingAnnotator(p)
 }
-func (p *uowProvider) TreeWalker() (publicops.TreeWalker, error) { return uow.NewTreeWalker(p) }
+func (p *uowProvider) TreeWalker() (publicops.TreeWalker, error)   { return uow.NewTreeWalker(p) }
+func (p *uowProvider) BatchGetter() (publicops.BatchGetter, error) { return uow.NewBatchGetter(p) }
+
 func (p *uowProvider) GraphCounter() (publicops.GraphCounter, error) {
 	return uow.NewGraphCounter(p)
 }
@@ -117,7 +119,10 @@ func (p *uowProvider) VersionReconciler() (publicops.VersionReconciler, error) {
 }
 func (p *uowProvider) MetadataCAS() (publicops.MetadataCAS, error) { return uow.NewMetadataCAS(p) }
 func (p *uowProvider) Releaser() (publicops.Releaser, error)       { return uow.NewReleaser(p) }
-func (p *uowProvider) Memories() (memoryops.Memories, error)       { return uow.NewMemories(p) }
+func (p *uowProvider) LeaseReclaimer() (publicops.LeaseReclaimer, error) {
+	return uow.NewLeaseReclaimer(p)
+}
+func (p *uowProvider) Memories() (memoryops.Memories, error) { return uow.NewMemories(p) }
 func (p *uowProvider) EventsJournalCursor() (storage.EventsJournalCursor, error) {
 	return uow.NewEventsJournalCursor(p)
 }
@@ -172,6 +177,7 @@ var (
 	_ uow.BlockingAnnotatorSource        = (*uowProvider)(nil)
 	_ uow.TreeWalkerSource               = (*uowProvider)(nil)
 	_ uow.GraphCounterSource             = (*uowProvider)(nil)
+	_ uow.BatchGetterSource              = (*uowProvider)(nil)
 	_ uow.CounterSource                  = (*uowProvider)(nil)
 	_ uow.ReadyCounterSource             = (*uowProvider)(nil)
 	_ uow.ReadyClaimerSource             = (*uowProvider)(nil)
@@ -192,6 +198,7 @@ var (
 	_ uow.VersionReconcilerSource        = (*uowProvider)(nil)
 	_ uow.MetadataCASSource              = (*uowProvider)(nil)
 	_ uow.ReleaserSource                 = (*uowProvider)(nil)
+	_ uow.LeaseReclaimerSource           = (*uowProvider)(nil)
 	_ uow.MemoriesSource                 = (*uowProvider)(nil)
 	_ uow.EventsJournalCursorSource      = (*uowProvider)(nil)
 )

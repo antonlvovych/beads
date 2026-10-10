@@ -56,7 +56,7 @@ name coverage.
 
 The manifest file holds more than one block (one per total_shards value in
 use): the legacy, frozen 15-shard block pr-risk.yml/main.yml's jobs read, and
-the Bazel-only lane's own block (30 shards as of F2). By default this prints
+the Bazel-only lane's own block (34 shards since 2026-10-09). By default this prints
 only the requested total's block to stdout, which is NOT safe to redirect
 straight into the manifest file (`gen... 30 > file` deletes every other
 block). Use --write to update the file in place instead: it replaces only
@@ -81,6 +81,9 @@ import sys
 default_manifest_path = '.github/scripts/proxied-cmd-test-shards.txt'
 
 func_re = re.compile(r'^func (Test(?:ProxiedServer|ServerMode)[A-Za-z0-9_]+)\(')
+# A shared-server bd init: newSharedProxiedProject(WithHooks) or the root
+# variant, newSharedProxiedRootProject.
+shared_init_re = re.compile(r'newSharedProxied(?:Root)?Project')
 
 
 def discover_inits_cost():
@@ -98,7 +101,7 @@ def discover_inits_cost():
             elif ln.startswith('func '):
                 cur = None
             if cur:
-                costs[cur] += ln.count('newSharedProxiedProject')
+                costs[cur] += len(shared_init_re.findall(ln))
     for k in costs:
         costs[k] = max(costs[k], 1)
     return costs
@@ -210,6 +213,16 @@ def render(total, shards, weights):
         out.append('# after adding tests (they hash-distribute until a maintainer chooses')
         out.append('# to reweight on purpose). --check does not cover this block; only the')
         out.append('# Bazel-only --weights=duration block is checked in CI.')
+        out.append('#')
+        out.append('# Hand-pinned lines are allowed: when a hash-placed test overloads a')
+        out.append('# shard toward the 15m -test.timeout, a reviewed change may list it')
+        out.append('# on a lighter shard without moving anything already listed (done in')
+        out.append('# Oct 2026 for TestProxiedServerStorageClass,')
+        out.append('# TestProxiedServerServeRefusesAStaleCheckpointWithGone,')
+        out.append('# TestProxiedServerListComments and')
+        out.append('# TestProxiedServerServeRefusesAStreamOnADisabledJournal; and for')
+        out.append('# TestProxiedServerOutageReconnectAcceptanceMatrix, pinned to shard 1')
+        out.append('# instead of hashing onto shard 14).')
     else:
         out.append(f'# {total}-shard split for the Bazel-only proxied-server tier')
         out.append('# (bazel-proxied in .github/workflows/bazel.yml), bin-packed')

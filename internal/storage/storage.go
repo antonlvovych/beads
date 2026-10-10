@@ -44,6 +44,10 @@ var (
 // guarded close. See issueops.CloseOpenChildrenError.
 type CloseOpenChildrenError = issueops.CloseOpenChildrenError
 
+// VersionMismatchError reports the expected and current row versions that
+// refused a guarded write. See issueops.VersionMismatchError.
+type VersionMismatchError = issueops.VersionMismatchError
+
 // ErrNotOwner is returned when an actor tries to unclaim an issue that is claimed
 // by a different actor. Releasing another actor's claim requires the force
 // escape hatch (bd unclaim --force), reserved for admin/reaper use.
@@ -282,6 +286,12 @@ type Storage interface {
 	// EdgeReader (that one answers with the stored ROWS, outbound only). Reads
 	// fire no hooks, as for IssueReader.
 	GraphCounter() (issueops.GraphCounter, error)
+	// BatchGetter returns the guarded batch-read surface for this store: many
+	// issues by id, hydrated, in ONE snapshot. Its own role rather than a mode
+	// of IssueReader because a miss here is a RESULT FIELD (Missing) and not
+	// ErrNotFound — a batch GET is a set read, not a precondition on every
+	// member succeeding. Reads fire no hooks, as for IssueReader.
+	BatchGetter() (issueops.BatchGetter, error)
 	// ReadyCounter returns the guarded ready-count surface for this store: the
 	// size of the ready set, which is the number `bd ready`'s pagination
 	// publishes and which no other role answers. Counter's predicate is a
@@ -368,6 +378,15 @@ type Storage interface {
 	// assignee and status, which is on_update — the same event the journal
 	// already records for it. See hook_releaser.go.
 	Releaser() (issueops.Releaser, error)
+	// LeaseReclaimer returns the lease-sweep surface for this store: revert
+	// every lease that has been held past its deadline back to its
+	// pre-claim state, for a caller that is a clock rather than a human or a
+	// request.
+	//
+	// It is a WRITE role and its hook decorator WRAPS: a reclaim changes
+	// assignee and status per reverted row, which is on_update, the same
+	// event Releaser fires. See hook_lease_reclaimer.go.
+	LeaseReclaimer() (issueops.LeaseReclaimer, error)
 
 	// Issue CRUD
 	CreateIssue(ctx context.Context, issue *types.Issue, actor string) error
@@ -388,6 +407,9 @@ type Storage interface {
 	// when the current assignee differs.
 	UnclaimIssueIfAssignee(ctx context.Context, id string, actor string, expectedAssignee string) error
 	UpdateIssueType(ctx context.Context, id string, issueType string, actor string) error
+	// CloseIssue is the raw close: it applies neither the close guards nor
+	// close policy, except over HTTP, where it closes with force and a template
+	// — the one guard force never bypasses — still refuses.
 	CloseIssue(ctx context.Context, id string, reason string, actor string, session string) error
 	// CloseIssueChecked closes an issue, but refuses with ErrCloseOpenChildren
 	// when it has open parent-child dependents, or ErrCloseBlocked when it has a
@@ -399,9 +421,16 @@ type Storage interface {
 	// (no TOCTOU). When opts.ExpectedVersion is non-nil it adds an orthogonal
 	// optimistic-concurrency precondition: the close proceeds only if the issue's
 	// current RowVersion still equals *opts.ExpectedVersion, else it refuses with
-	// ErrVersionMismatch atomically (Force does NOT bypass this check). Already-
-	// closed is an idempotent success with Unchanged=true; a missing issue returns
-	// ErrNotFound.
+	// ErrVersionMismatch atomically (Force does NOT bypass this check). After
+	// the version check and before the child and blocker policy it applies the
+	// close guards in the same transaction: a template refuses with
+	// *issueops.TemplateReadOnlyError whatever Force says, and unless Force is
+	// set a pinned issue refuses with *issueops.PinnedError and one assigned to
+	// someone other than actor with *issueops.CloseNotAssigneeError. Already-
+	// closed is an idempotent success with Unchanged=true and skips the guards;
+	// a missing issue returns ErrNotFound. CloseIssue above is the raw close and
+	// applies neither the guards nor the policy, except that over HTTP, where
+	// the template guard has no bypass on the wire, a template still refuses.
 	CloseIssueChecked(ctx context.Context, id string, actor string, opts CloseIssueOptions) (CloseIssueResult, error)
 	DeleteIssue(ctx context.Context, id string) error
 	SearchIssues(ctx context.Context, query string, filter types.IssueFilter) ([]*types.Issue, error)
@@ -628,7 +657,7 @@ type Storage interface {
 type CloseIssueOptions struct {
 	Reason  string
 	Session string
-	Force   bool // bypass the is_blocked guard (mirrors `bd close --force`)
+	Force   bool // bypass close policy and the pin and assignee guards, never the template (mirrors `bd close --force`)
 	// ExpectedVersion, when non-nil, gates the close on an optimistic-concurrency
 	// check: the close proceeds only if the issue's current RowVersion (the
 	// row_lock token) equals *ExpectedVersion, otherwise it refuses with
